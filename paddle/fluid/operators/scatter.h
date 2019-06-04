@@ -14,16 +14,74 @@ limitations under the License. */
 
 #pragma once
 #include <cstring>
+#include <string>
 
 #include "paddle/fluid/framework/ddim.h"
 #include "paddle/fluid/framework/eigen.h"
 #include "paddle/fluid/framework/tensor.h"
+#include "paddle/fluid/operators/math/blas.h"
+#include "paddle/fluid/operators/jit/kernels.h"
 #include "paddle/fluid/platform/place.h"
+#include "unordered_set"
 
 namespace paddle {
 namespace operators {
 
 using Tensor = framework::Tensor;
+/**
+  * Return the updated array pointer, use blas or eigen lib to optimize time
+ * cost
+ */
+/*
+template <typename T, typename IndexT = int>
+void elementwise_inner_add(const framework::ExecutionContext& ctx,
+                      const T* src_pointer, T* dist_pointer,
+                      const int& src_index, const IndexT& dist_index,
+                      const int& slice_size, const size_t& slice_bytes) {
+  // use blas lib to add
+  auto blas = math::GetBlas<platform::CPUDeviceContext, T>(ctx);
+
+  blas.VADD(slice_size, src_pointer + src_index * slice_size,
+            dist_pointer + dist_index * slice_size, 
+  	    dist_pointer + dist_index * slice_size);
+}*/
+template <typename T, typename IndexT = int>
+typename std::enable_if<std::is_floating_point<T>::value>::type
+elementwise_inner_add(const framework::ExecutionContext& ctx,
+                      const T* src_pointer, T* dist_pointer,
+                      const int& src_index, const IndexT& dist_index,
+                      const int& slice_size, const size_t& slice_bytes) {
+  // use blas lib to add
+  auto blas = math::GetBlas<platform::CPUDeviceContext, T>(ctx);
+
+  blas.VADD(slice_size, src_pointer + src_index * slice_size,
+            dist_pointer + dist_index * slice_size, 
+  	    dist_pointer + dist_index * slice_size);
+}
+
+template <typename T, typename IndexT = int>
+typename std::enable_if<!std::is_floating_point<T>::value>::type
+elementwise_inner_add(const framework::ExecutionContext& ctx,
+                      const T* src_pointer, T* dist_pointer,
+                      const int& src_index, const IndexT& dist_index,
+                      const int& slice_size, const size_t& slice_bytes) {
+   return;
+}
+/*
+template <typename T, typename IndexT = int>
+typename std::enable_if<!std::is_floating_point<T>::value>::type
+elementwise_inner_add(const framework::ExecutionContext& ctx,
+                      const framework::Tensor& src, framework::Tensor* dist,
+                      const int& src_index, const IndexT& dist_index,
+                      const int& slice_size, const size_t& slice_bytes) {
+  auto src_slice = src.Slice(src_index, src_index + 1);
+  auto dist_slice = dist->Slice(dist_index, dist_index + 1);
+
+  auto eigen_src = framework::EigenVector<T>::Flatten(src_slice);
+  auto eigen_dist = framework::EigenVector<T>::Flatten(dist_slice);
+
+  eigen_dist += eigen_src;
+}*/
 
 /**
  * Return a updated tensor from source tensor, scattered according to index:
@@ -61,6 +119,48 @@ void ScatterAssign(const platform::DeviceContext& ctx, const Tensor& src,
   for (int i = 0; i < index_size; ++i) {
     IndexT index_ = p_index[i];
     memcpy(p_output + index_ * slice_size, p_src + i * slice_size, slice_bytes);
+  }
+}
+
+template <typename T, typename IndexT = int>
+void ScatterAssignAdd(const framework::ExecutionContext& ctx, const Tensor& src,
+                      const Tensor& index, Tensor* output, int fixed_index = -1) {
+  PADDLE_ENFORCE(platform::is_cpu_place(ctx.device_context().GetPlace()));
+  // check index of shape 1-D
+  PADDLE_ENFORCE(index.dims().size() == 1 ||
+                 (index.dims().size() == 2 && index.dims()[1] == 1));
+
+  const T* src_ptr = src.data<T>();
+  T* out_ptr = output->data<T>();
+  int index_size = index.dims()[0];
+
+  auto src_dims = src.dims();
+  auto dst_dims = output->dims();
+
+  const IndexT* p_index = index.data<IndexT>();
+
+  // check src shape and dst shape should match
+  for (int i = 1; i < src_dims.size(); i++)
+    PADDLE_ENFORCE(src_dims[i] == dst_dims[i]);
+
+  // slice size
+  size_t slice_size = 1;
+  for (int i = 1; i < src_dims.size(); ++i) slice_size *= src_dims[i];
+
+  //const size_t& slice_bytes = slice_size * sizeof(T);
+
+  auto compute = jit::KernelFuncs<jit::VAddTuple<T>, platform::CPUPlace>::Cache().At(slice_size);
+  for (int i = 0; i < index_size; ++i) {
+    const IndexT& index_ = p_index[i];
+    int src_index = i;
+    if (fixed_index >= 0) {
+      src_index = fixed_index;
+    }
+    compute(src_ptr + src_index * slice_size, out_ptr +  index_ * slice_size, 
+	  out_ptr +  index_ * slice_size, slice_size);
+
+    //elementwise_inner_add<T, IndexT>(ctx, src_ptr, out_ptr, src_index, 
+    //	  index_, slice_size, slice_bytes);
   }
 }
 

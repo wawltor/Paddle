@@ -37,6 +37,7 @@ from ..dygraph import layers
 
 __all__ = [
     'fc',
+    'matmul_sparse',
     'embedding',
     'dynamic_lstm',
     'dynamic_lstmp',
@@ -345,7 +346,37 @@ def fc(input,
     # add activation
     return helper.append_activation(pre_activation)
 
+def matmul_sparse(dense_input,
+                 sp_row_ids,
+                 sp_col_ids,
+                 sp_row_num,
+                 dtype="float32"):
+   """
+   **sparse matrix mul**
+   This op is used to mul matrix between of the dense matrix and sparse matrix,
+   provived by the dense matrix, and use the Tensor to provide sparse message.
 
+   Args:
+      dense_input(Variable): The tensor variable containing the matrix, Height Width 
+      sp_row_ids(Variable): the row of sparse matrix
+      sp_col_values(Variable): the column indices of sparse matrix 
+      sp_col_weights(Variable): the column weight of sparse matrix
+      sp_col_size(int|long): the length of sparse matrix column size
+   Return:
+      Variable: the result of matrix mal between dense matrix and sparse matrix 
+   """
+   helper = LayerHelper('matmul_sparse', **locals())
+   dtype = dense_input.dtype
+   out = helper.create_variable_for_type_inference(dtype)
+      
+   helper.append_op(type='matmul_sparse',
+                    inputs={'X': dense_input,
+                            'RowIds': sp_row_ids,
+                            'ColIds': sp_col_ids,
+                            'Sp_row_num': sp_row_num},
+                    outputs={'Out': out})
+   return out
+   
 def embedding(input,
               size,
               is_sparse=False,
@@ -7782,7 +7813,7 @@ def image_resize_short(input, out_short_len, resample='BILINEAR'):
     return image_resize(input=input, out_shape=out_shape, resample=resample)
 
 
-def gather(input, index):
+def gather(input, index, overwrite=True):
     """
     **Gather Layer**
 
@@ -7813,6 +7844,12 @@ def gather(input, index):
     Args:
         input (Variable): The source input with rank>=1.
         index (Variable): The index input with rank=1.
+        overwrite (bool): The mode that update the grad when has same index.
+            If True, use the overwrite mode to update the grad of the same index,
+	    if False, use the accumulate mode to update the grad of the same index. 
+	    Default value is True.
+	    
+
 
     Returns:
         output (Variable): The output is a tensor with the same rank as input.
@@ -7832,7 +7869,8 @@ def gather(input, index):
         type="gather",
         inputs={"X": input,
                 "Index": index},
-        outputs={"Out": out})
+        outputs={"Out": out},
+        attrs={'overwrite': overwrite})
     return out
 
 
