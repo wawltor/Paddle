@@ -13,8 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License. */
 
 #pragma once
+#include <unordered_set>
 #include "paddle/fluid/framework/tensor.h"
+#include "paddle/fluid/platform/cuda_primitives.h"
 #include "paddle/fluid/platform/place.h"
+#include "math/math_function.h"
 
 namespace paddle {
 namespace operators {
@@ -24,17 +27,33 @@ using Tensor = framework::Tensor;
 #define CUDA_1D_KERNEL_LOOP(i, n)                              \
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < (n); \
        i += blockDim.x * gridDim.x)
-
 template <typename T, typename IndexT = int>
-__global__ void ScatterCUDAKernel(const T* params, const IndexT* indices,
+__global__ void ScatterInitCUDAKernel(const IndexT* indices,
                                   T* output, size_t index_size,
-                                  size_t slice_size) {
+                                  size_t slice_size, bool overwrite) {
   CUDA_1D_KERNEL_LOOP(i, index_size * slice_size) {
     int indices_i = i / slice_size;
     int slice_i = i - indices_i * slice_size;  // offset inside the slice
     IndexT scatter_i = indices[indices_i];
     IndexT out_i = scatter_i * slice_size + slice_i;
-    *(output + out_i) = *(params + i);
+    *(output + out_i) = static_cast<T>(0);
+  }
+}
+
+template <typename T, typename IndexT = int>
+__global__ void ScatterCUDAKernel(const T* params, const IndexT* indices,
+                                  T* output, size_t index_size,
+                                  size_t slice_size, bool overwrite) {
+  CUDA_1D_KERNEL_LOOP(i, index_size * slice_size) {
+    int indices_i = i / slice_size;
+    int slice_i = i - indices_i * slice_size;  // offset inside the slice
+    IndexT scatter_i = indices[indices_i];
+    IndexT out_i = scatter_i * slice_size + slice_i;
+    if (overwrite) {
+      *(output + out_i) = *(params + i);
+    } else {
+      paddle::platform::CudaAtomicAdd(output + out_i, *(params + i));
+    }
   }
 }
 
@@ -47,10 +66,13 @@ __global__ void ScatterCUDAKernel(const T* params, const IndexT* indices,
  * return: output tensor
  */
 template <typename T, typename IndexT = int>
-void GPUScatterAssign(const platform::DeviceContext& ctx, const Tensor& src,
-                      const Tensor& index, Tensor* output) {
-  // PADDLE_ENFORCE(platform::is_gpu_place(place));
+void GPUScatterAssign(const framework::ExecutionContext& context, const Tensor& src,
+                      const Tensor& index, Tensor* output,
+                      bool overwrite = true) {
+  //PADDLE_ENFORCE(platform::is_gpu_place(place));
   // check index of shape 1-D
+
+  const auto& ctx = context.device_context();
   PADDLE_ENFORCE(index.dims().size() == 1 ||
                  (index.dims().size() == 2 && index.dims()[1] == 1));
   int index_size = index.dims()[0];
@@ -66,15 +88,44 @@ void GPUScatterAssign(const platform::DeviceContext& ctx, const Tensor& src,
   const T* p_src = src.data<T>();
   const IndexT* p_index = index.data<IndexT>();
   T* p_output = output->data<T>();
+  const size_t& slice_bytes = slice_size * sizeof(T);
+
+  // if in not overwrite mode, need to init output data 
+  //auto stream = context.cuda_device_context().stream();
+  /*
+  auto& dev_ctx = context.cuda_device_context();
+  if (!overwrite) {
+     for (int i = 0; i < index_size; ++i) {
+        const IndexT& index = p_index[i];
+        VLOG(0) << "check 1";
+        auto slice_tensor = output->Slice(index, index + 1);
+        VLOG(0) << "check 2";
+        slice_tensor.mutable_data<T>(context.GetPlace());
+        math::SetConstant<platform::CUDADeviceContext, T> set_zero;
+        set_zero(dev_ctx, &slice_tensor,
+                 static_cast<T>(0));
+        VLOG(0) << "check 2";
+
+     }
+  }*/
 
   int block = 512;
   int n = slice_size * index_size;
   int grid = (n + block - 1) / block;
 
+  // if not overwrite mode, init data
+  if (!overwrite) { 
+     ScatterInitCUDAKernel<T, IndexT><<<
+        grid, block, 0,
+        reinterpret_cast<const platform::CUDADeviceContext&>(ctx).stream()>>>(
+        p_index, p_output, index_size, slice_size, overwrite);
+  }
+
   ScatterCUDAKernel<T, IndexT><<<
       grid, block, 0,
       reinterpret_cast<const platform::CUDADeviceContext&>(ctx).stream()>>>(
-      p_src, p_index, p_output, index_size, slice_size);
+      p_src, p_index, p_output, index_size, slice_size, overwrite);
+
 }
 
 }  // namespace operators
