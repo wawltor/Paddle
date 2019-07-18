@@ -23,6 +23,11 @@ namespace operators {
 
 using Tensor = framework::Tensor;
 
+// define the mode of scatter
+const std::string MODE_ADD = "add";
+const std::string MODE_OVERWRITE = "overwrite";
+const std::string MODE_MAX = "max";
+
 template <typename T>
 class ScatterOpKernel : public framework::OpKernel<T> {
  public:
@@ -33,7 +38,7 @@ class ScatterOpKernel : public framework::OpKernel<T> {
     auto *Ids = ctx.Input<Tensor>("Ids");
     auto *Updates = ctx.Input<Tensor>("Updates");
     auto *Out = ctx.Output<Tensor>("Out");
-    double overwrite = ctx.Attr<bool>("overwrite");
+		std::string mode = ctx.Attr<std::string>("mode");
 
     // In place output: Out = X, Out[Ids] = Updates
     framework::TensorCopySync(*X, ctx.GetPlace(), Out);
@@ -47,19 +52,27 @@ class ScatterOpKernel : public framework::OpKernel<T> {
         paddle::framework::DataTypeToString(index_type),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
-    if (overwrite) {
-      if (index_type == framework::proto::VarType::INT32) {
-        ScatterAssign<T, int32_t>(ctx.device_context(), *Updates, *Ids, Out);
-      } else {
-        ScatterAssign<T, int64_t>(ctx.device_context(), *Updates, *Ids, Out);
-      }
-    } else {
-      if (index_type == framework::proto::VarType::INT32) {
-        ScatterAssignAdd<T, int32_t>(ctx, *Updates, *Ids, Out);
-      } else {
-        ScatterAssignAdd<T, int64_t>(ctx, *Updates, *Ids, Out);
-      }
-    }
+       if (mode == MODE_OVERWRITE) {
+         if (index_type == framework::proto::VarType::INT32) {
+           ScatterAssign<T, int32_t>(ctx.device_context(), *Updates, *Ids, Out);
+         } else {
+           ScatterAssign<T, int64_t>(ctx.device_context(), *Updates, *Ids, Out);
+         }
+       } else if(mode == MODE_ADD) {
+         if (index_type == framework::proto::VarType::INT32) {
+           ScatterAssignAdd<T, int32_t>(ctx, *Updates, *Ids, Out);
+         } else {
+           ScatterAssignAdd<T, int64_t>(ctx, *Updates, *Ids, Out);
+         }
+       } else if (mode == MODE_MAX) {
+         if (index_type == framework::proto::VarType::INT32) {
+           ScatterAssignMax<T, int32_t>(ctx, *Updates, *Ids, Out);
+         } else {
+           ScatterAssignMax<T, int64_t>(ctx, *Updates, *Ids, Out);
+         }
+       } else {
+         LOG(FATAL) << "The scatter mode of " << mode << " is not supported, please change it.";
+       }
   }
 };
 
@@ -77,8 +90,22 @@ class ScatterGradientOpKernel : public framework::OpKernel<T> {
     // In place gradient: dX = dO
     framework::TensorCopySync(*dOut, ctx.GetPlace(), dX);
     dUpdates->mutable_data<T>(ctx.GetPlace());
+
+    const auto &index_type = Ids->type();
+		bool index_type_match = index_type == framework::proto::VarType::INT32 ||
+			index_type == framework::proto::VarType::INT64;
+		PADDLE_ENFORCE(
+				index_type_match,
+				"Index holds the wrong type, it holds %s, but desires to be %s or %s",
+				paddle::framework::DataTypeToString(index_type),
+				paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
+				paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
+    if (index_type == framework::proto::VarType::INT32) {
+        CPUGather<T, int32_t>(ctx.device_context(), *dOut, *Ids, dUpdates);
+    } else {
+        CPUGather<T, int64_t>(ctx.device_context(), *dOut, *Ids, dUpdates);
+    }
     // Gradient by Gather: dUpdates = dO[Ids]
-    CPUGather<T>(ctx.device_context(), *dOut, *Ids, dUpdates);
   }
 };
 

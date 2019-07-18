@@ -63,6 +63,41 @@ elementwise_inner_add(const framework::ExecutionContext& ctx,
 
   eigen_dist += eigen_src;
 }
+
+template <typename T, typename IndexT = int>
+typename std::enable_if<std::is_floating_point<T>::value>::type
+elementwise_inner_max(const framework::ExecutionContext& ctx,
+                      const T* src_pointer, const T* dist_pointer,
+                      T* result_dist_pointer, const framework::Tensor& src,
+                      framework::Tensor* dist, const int& src_index,
+                      const IndexT& dist_index, const int& slice_size,
+                      const size_t& slice_bytes) {
+  auto src_slice = src.Slice(src_index, src_index + 1);
+  auto dist_slice = dist->Slice(dist_index, dist_index + 1);
+
+  auto eigen_src = framework::EigenVector<T>::Flatten(src_slice);
+  auto eigen_dist = framework::EigenVector<T>::Flatten(dist_slice);
+  eigen_dist = eigen_dist.cwiseMax(eigen_src);
+}
+
+template <typename T, typename IndexT = int>
+typename std::enable_if<!std::is_floating_point<T>::value>::type
+elementwise_inner_max(const framework::ExecutionContext& ctx,
+                      const T* src_pointer, const T* dist_pointer,
+                      T* result_dist_pointer, const framework::Tensor& src,
+                      framework::Tensor* dist, const int& src_index,
+                      const IndexT& dist_index, const int& slice_size,
+                      const size_t& slice_bytes) {
+	// if the value type is int, compare the data directly
+	for (int i = 0; i < slice_size; ++i) {
+		if (*(dist_pointer + slice_size * dist_index + i) < 
+			*(src_pointer + slice_size * src_index + i)) {
+			*(dist_pointer + slice_size * dist_index + i) = 
+				*(src_pointer + slice_size * src_index + i);
+		}
+	}
+}
+	
 /**
  * Return an updated tensor from source tensor, scattered according to index:
  * dst[i] = src[index[i]]
@@ -130,12 +165,6 @@ void ScatterAssignAdd(const framework::ExecutionContext& ctx, const Tensor& src,
 
   const size_t& slice_bytes = slice_size * sizeof(T);
 
-  // if not in overwrite mode, need to init output data
-  for (int i = 0; i < index_size; ++i) {
-    const IndexT& index_ = p_index[i];
-    memset(result_p_output + slice_size * index_, 0, slice_bytes);
-  }
-
   for (int i = 0; i < index_size; ++i) {
     const IndexT& index_ = p_index[i];
     elementwise_inner_add<T, IndexT>(ctx, p_src, p_output, result_p_output, src,
@@ -143,6 +172,45 @@ void ScatterAssignAdd(const framework::ExecutionContext& ctx, const Tensor& src,
                                      slice_bytes);
   }
 }
+
+
+template <typename T, typename IndexT = int>
+void ScatterAssignMax(const framework::ExecutionContext& ctx, const Tensor& src,
+		             const Tensor& index, Tensor* output) {
+
+  // check index of shape 1-D
+  PADDLE_ENFORCE(index.dims().size() == 1 ||
+                 (index.dims().size() == 2 && index.dims()[1] == 1));
+  int index_size = index.dims()[0];
+
+  auto src_dims = src.dims();
+  auto dst_dims = output->dims();
+
+  const T* p_src = src.data<T>();
+  const IndexT* p_index = index.data<IndexT>();
+
+  const T* p_output = output->data<T>();
+  T* result_p_output = output->data<T>();
+
+  // check src shape and dst shape should match
+  for (int i = 1; i < src_dims.size(); i++)
+    PADDLE_ENFORCE(src_dims[i] == dst_dims[i]);
+
+  // slice size
+  size_t slice_size = 1;
+  for (int i = 1; i < src_dims.size(); ++i) slice_size *= src_dims[i];
+
+  const size_t& slice_bytes = slice_size * sizeof(T);
+
+  for (int i = 0; i < index_size; ++i) {
+	 const IndexT& index_ = p_index[i];
+	 elementwise_inner_max<T, IndexT>(ctx, p_src, p_output, result_p_output, src,
+                                     output, i, index_, slice_size,
+                                     slice_bytes);
+  }
+}
+
+
 
 }  // namespace operators
 }  // namespace paddle

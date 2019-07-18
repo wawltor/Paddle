@@ -16,6 +16,7 @@ limitations under the License. */
 #include "paddle/fluid/operators/gather.cu.h"
 #include "paddle/fluid/operators/gather_op.h"
 #include "paddle/fluid/operators/scatter.cu.h"
+#include "paddle/fluid/operators/scatter_op.h"
 
 namespace paddle {
 namespace operators {
@@ -66,22 +67,28 @@ class GatherGradOpCUDAKernel : public framework::OpKernel<T> {
     dxt.device(place) = dxt.constant(static_cast<T>(0));
     if (dO->numel() == 0) return;
 
-    const auto &index_type = index->type();
-    bool index_type_match = index_type == framework::proto::VarType::INT32 ||
-                            index_type == framework::proto::VarType::INT64;
-    PADDLE_ENFORCE(
-        index_type_match,
-        "Index holds the wrong type, it holds %s, but desires to be %s or %s",
-        paddle::framework::DataTypeToString(index_type),
-        paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
-        paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
-    if (index_type == framework::proto::VarType::INT32) {
-      GPUScatterAssign<T, int>(ctx, *dO, *index, dX,
-                               ctx.Attr<bool>("overwrite"));
-    } else if (index_type == framework::proto::VarType::INT64) {
-      GPUScatterAssign<T, int64_t>(ctx, *dO, *index, dX,
-                                   ctx.Attr<bool>("overwrite"));
-    }
+		std::string mode = "";
+		if (ctx.Attr<bool>("overwrite")) {
+			mode = MODE_OVERWRITE;
+		} else {
+			mode = MODE_ADD;
+		}
+
+		const auto &index_type = index->type();
+		bool index_type_match = index_type == framework::proto::VarType::INT32 ||
+			index_type == framework::proto::VarType::INT64;
+		PADDLE_ENFORCE(
+				index_type_match,
+				"Index holds the wrong type, it holds %s, but desires to be %s or %s",
+				paddle::framework::DataTypeToString(index_type),
+				paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
+				paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
+
+		if (index_type == framework::proto::VarType::INT32) {
+			GPUScatterAssign<T, int32_t>(ctx, *dO, *index, dX, mode);
+		} else {
+			GPUScatterAssign<T, int64_t>(ctx, *dO, *index, dX, mode);
+		}
   }
 };
 

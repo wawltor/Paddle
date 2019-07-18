@@ -8018,7 +8018,7 @@ def gather(input, index, overwrite=True):
     return out
 
 
-def scatter(input, index, updates, name=None, overwrite=True):
+def scatter(input, index, updates, name=None, mode="overwrite"):
     """
     **Scatter Layer**
 
@@ -8036,10 +8036,14 @@ def scatter(input, index, updates, name=None, overwrite=True):
                           int32 or int64 as it is used as indexes.
         updates (Variable): The updated value of scatter op.
         name (str|None): The output variable name. Default None.
-        overwrite (bool): The mode that updating the output when has same index.
-            If True, use the overwrite mode to update the output of the same index,
-	    if False, use the accumulate mode to update the output of the same index. 
-	    Default value is True.You can set overwrite=False to implement scatter_add.
+	  	  mode(str): The mode of scatter method, include overwrite, add, max.
+				           If in overwrite mode, just copying the updates data to selected indices.
+			                 Noting, if in `overwrite` mode, the indices should not have the same index.
+				           If in `add` mode, at the same time, the indices have the same index, the op
+		                   will use the add method at the same index.
+		               If in `max` mode, the op will select the max value in the same index.  
+	                 Default value is `overwrite`.You can set `add` to implement scatter_add, and 
+                      you can set `max` to implement scatter_max.
 
     Returns:
         output (Variable): The output is a tensor with the same shape as input.
@@ -8064,7 +8068,7 @@ def scatter(input, index, updates, name=None, overwrite=True):
         inputs={"X": input,
                 "Ids": index,
                 "Updates": updates},
-        attrs={'overwrite': overwrite},
+        attrs={'mode': mode},
         outputs={"Out": out})
     return out
 
