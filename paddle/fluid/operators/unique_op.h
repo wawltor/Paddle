@@ -66,7 +66,7 @@ struct UniqueOpFunctor {
       count_->Resize(framework::make_ddim({static_cast<int64_t>(uniq.size())}));
       IndexT* count_data = count_->mutable_data<IndexT>(platform::CPUPlace());
       // init count_data to 0
-      memset(count_data, 0, uniq.size() * sizeof(InT));
+      memset(count_data, 0, uniq.size() * sizeof(IndexT));
 
       for (auto i = 0; i < in_->numel(); ++i) {
         const IndexT& index = index_data[i];
