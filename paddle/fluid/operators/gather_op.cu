@@ -12,10 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
+#include <string>
 #include "paddle/fluid/framework/eigen.h"
 #include "paddle/fluid/operators/gather.cu.h"
 #include "paddle/fluid/operators/gather_op.h"
 #include "paddle/fluid/operators/scatter.cu.h"
+#include "paddle/fluid/operators/scatter_op.h"
 
 namespace paddle {
 namespace operators {
@@ -66,6 +68,13 @@ class GatherGradOpCUDAKernel : public framework::OpKernel<T> {
     dxt.device(place) = dxt.constant(static_cast<T>(0));
     if (dO->numel() == 0) return;
 
+    std::string mode = "";
+    if (ctx.Attr<bool>("overwrite")) {
+      mode = "overwrite";
+    } else {
+      mode = "add";
+    }
+
     const auto &index_type = index->type();
     bool index_type_match = index_type == framework::proto::VarType::INT32 ||
                             index_type == framework::proto::VarType::INT64;
@@ -75,12 +84,11 @@ class GatherGradOpCUDAKernel : public framework::OpKernel<T> {
         paddle::framework::DataTypeToString(index_type),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
+
     if (index_type == framework::proto::VarType::INT32) {
-      GPUScatterAssign<T, int>(ctx, *dO, *index, dX,
-                               ctx.Attr<bool>("overwrite"));
-    } else if (index_type == framework::proto::VarType::INT64) {
-      GPUScatterAssign<T, int64_t>(ctx, *dO, *index, dX,
-                                   ctx.Attr<bool>("overwrite"));
+      GPUScatterAssign<T, int32_t>(ctx, *dO, *index, dX, mode);
+    } else {
+      GPUScatterAssign<T, int64_t>(ctx, *dO, *index, dX, mode);
     }
   }
 };

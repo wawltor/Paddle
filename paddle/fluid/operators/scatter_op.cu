@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
+#include <string>
 #include "paddle/fluid/operators/gather.cu.h"
 #include "paddle/fluid/operators/gather_op.h"
 #include "paddle/fluid/operators/scatter.cu.h"
@@ -30,10 +31,25 @@ class ScatterOpCUDAKernel : public framework::OpKernel<T> {
     auto *Ids = ctx.Input<Tensor>("Ids");
     auto *Updates = ctx.Input<Tensor>("Updates");
     auto *Out = ctx.Output<Tensor>("Out");
-    bool overwrite = ctx.Attr<bool>("overwrite");
+    std::string mode = ctx.Attr<std::string>("mode");
 
     Out->ShareDataWith(*X);
-    GPUScatterAssign<T>(ctx, *Updates, *Ids, Out, overwrite);
+
+    // use template class to support index32_t and index64_t
+    const auto &index_type = Ids->type();
+    bool index_type_match = index_type == framework::proto::VarType::INT32 ||
+                            index_type == framework::proto::VarType::INT64;
+    PADDLE_ENFORCE(
+        index_type_match,
+        "Index holds the wrong type, it holds %s, but desires to be %s or %s",
+        paddle::framework::DataTypeToString(index_type),
+        paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
+        paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
+    if (index_type == framework::proto::VarType::INT32) {
+      GPUScatterAssign<T, int32_t>(ctx, *Updates, *Ids, Out, mode);
+    } else {
+      GPUScatterAssign<T, int64_t>(ctx, *Updates, *Ids, Out, mode);
+    }
   }
 };
 
@@ -53,8 +69,25 @@ class ScatterGradOpCUDAKernel : public framework::OpKernel<T> {
     }
     if (dUpdates) {
       dUpdates->mutable_data<T>(ctx.GetPlace());
-      // Gradient by Gather: dUpdates = dO[Ids]
-      GPUGather<T>(ctx.device_context(), *dOut, *Ids, dUpdates);
+    }
+
+    const auto &index_type = Ids->type();
+    bool index_type_match = index_type == framework::proto::VarType::INT32 ||
+                            index_type == framework::proto::VarType::INT64;
+    PADDLE_ENFORCE(
+        index_type_match,
+        "Index holds the wrong type, it holds %s, but desires to be %s or %s",
+        paddle::framework::DataTypeToString(index_type),
+        paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
+        paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
+    // In place gradient: dX = dO
+    dX->ShareDataWith(*dOut);
+    dUpdates->mutable_data<T>(ctx.GetPlace());
+    // Gradient by Gather: dUpdates = dO[Ids]
+    if (index_type == framework::proto::VarType::INT32) {
+      GPUGather<T, int32_t>(ctx.device_context(), *dOut, *Ids, dUpdates);
+    } else {
+      GPUGather<T, int64_t>(ctx.device_context(), *dOut, *Ids, dUpdates);
     }
   }
 };

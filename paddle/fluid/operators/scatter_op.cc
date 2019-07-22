@@ -84,14 +84,21 @@ class ScatterOpMaker : public framework::OpProtoAndCheckerMaker {
     AddInput("Ids", "The index input of scatter op where X will be updated");
     AddInput("Updates", "The updated value of scatter op");
     AddOutput("Out", "The output of scatter op");
-    AddAttr<bool>("overwrite",
-                  "(bool, defalut: True) "
-                  "The mode that updating the output when has same index,"
-                  "If True, use the overwrite mode to update the output"
-                  "of the same index, if False, use the accumulate mode to"
-                  "update the output of the same index,Default value is True."
-                  "You can set overwrite=False to implement scatter_add.")
-        .SetDefault(true);
+    AddAttr<std::string>(
+        "mode",
+        "(str, defalut: `overwrite`) "
+        "The mode of scatter method, include overwrite, add, max."
+        "If in overwrite mode, just copying the updates data to selected "
+        "indices."
+        "Noting, if in `overwrite` mode, the indices should not have the same "
+        "index."
+        "If in `add` mode, at the same time, the indices have the same index, "
+        "the op"
+        "will use the add method at the same index."
+        "If in `max` mode, the op will select the max value in the same index."
+        "Default value is `overwrite`.You can set `add` to implement "
+        "scatter_add.")
+        .SetDefault("overwrite");
     AddComment(R"DOC(
 Scatter Operator.
 
