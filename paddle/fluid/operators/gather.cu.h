@@ -39,6 +39,26 @@ __global__ void GatherCUDAKernel(const T* params, const IndexT* indices,
   }
 }
 
+template <typename T, typename IndexT = int>
+__global__ void GatherMaxCUDAKernel(const T* raw_src, const T* raw_updates,
+                                 const IndexT* indices, T* output_x,
+                                 T* output_u,
+                                 size_t index_size, size_t slice_size) {
+  CUDA_1D_KERNEL_LOOP(i, index_size * slice_size) {
+    int indices_i = i / slice_size;
+    int slice_i = i - indices_i * slice_size;  // offset inside the slice
+    IndexT gather_i = indices[indices_i];
+    IndexT params_i = gather_i * slice_size + slice_i;
+    bool is_big = raw_src[params_i] > raw_updates[i];
+    if (is_big) {
+      output_u[i] = static_cast<T>(0);
+    } else {
+      T tmp_value = output_x[params_i];
+      output_x[params_i] = static_cast<T>(0);
+      output_u[i] = tmp_value;
+    }
+  }
+}
 /**
  * A thin wrapper on gpu tensor
  * Return a new tensor from source tensor, gathered according to index
@@ -78,5 +98,35 @@ void GPUGather(const platform::DeviceContext& ctx, const Tensor& src,
       p_src, p_index, p_output, index_size, slice_size);
 }
 
+template <typename T, typename IndexT = int>
+void GPUMaxGather(const platform::DeviceContext& ctx, 
+               const Tensor& src, const Tensor& updates,
+               const Tensor& index,  
+               Tensor* output_x, Tensor* output_u) {
+
+  // check index of shape 1-D
+  PADDLE_ENFORCE(index.dims().size() == 1 ||
+                 (index.dims().size() == 2 && index.dims()[1] == 1));
+  int64_t index_size = index.dims()[0];
+
+  auto src_dims = src.dims();
+
+  const T* p_src = src.data<T>();
+  const T* p_updates = updates.data<T>();
+
+  const IndexT* p_index = index.data<IndexT>();
+
+  // slice size
+  int slice_size = 1;
+
+  int block = 512;
+  int n = slice_size * index_size;
+  int grid = (n + block - 1) / block;
+  GatherMaxCUDAKernel<T, IndexT><<<
+      grid, block, 0,
+      reinterpret_cast<const platform::CUDADeviceContext&>(ctx).stream()>>>(
+      p_src, p_updates, p_index, output_x, output_u);
+
+}
 }  // namespace operators
 }  // namespace paddle

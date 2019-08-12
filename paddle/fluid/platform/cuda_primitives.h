@@ -68,6 +68,62 @@ CUDA_ATOMIC_WRAPPER(Add, double) {
 }
 #endif
 
+// For CudaAtomicMax
+// This section is for int32_t uint32_t int64_t uint64_t(CudaAtomicMax)
+USE_CUDA_ATOMIC(Max, int);
+USE_CUDA_ATOMIC(Max, unsigned int);
+
+CUDA_ATOMIC_WRAPPER(Max, unsigned long long int) {
+  unsigned long long int old = *address, assumed;
+  do {
+    assumed = old;
+    old = atomicCAS(address, assumed,
+                    max(val, assumed));
+    // Note: uses integer comparison to avoid hang in case of NaN
+  } while (assumed != old);
+  return old;
+}
+
+CUDA_ATOMIC_WRAPPER(Max, int64_t) {
+  // Here, we check long long int must be int64_t.
+  static_assert(sizeof(int64_t) == sizeof(long long int),  // NOLINT
+                "long long should be int64");
+  return CudaAtomicMax(
+      reinterpret_cast<unsigned long long int *>(address),  // NOLINT
+      static_cast<unsigned long long int>(val));            // NOLINT
+}
+
+// This section is for float double(CudaAtomicMax)
+CUDA_ATOMIC_WRAPPER(Max, float) {
+  int *address_int = reinterpret_cast<int *>(address);
+  int old = *address_int, assumed;
+
+  do {
+    assumed = old;
+    old = atomicCAS(address_int, assumed,
+                    __float_as_int(max(val, __int_as_float(assumed))));
+    // Note: uses integer comparison to avoid hang in case of NaN
+  } while (assumed != old);
+
+  return __int_as_float(old);
+}
+
+CUDA_ATOMIC_WRAPPER(Max, double) {
+  unsigned long long int* address_ull =
+      reinterpret_cast<unsigned long long int*>(address);
+  unsigned long long int old = *address_ull, assumed;
+
+  do {
+    assumed = old;
+    old = atomicCAS(
+        address_ull, assumed,
+        __double_as_longlong(max(val, __longlong_as_double(assumed))));
+    // Note: uses integer comparison to avoid hang in case of NaN
+  } while (assumed != old);
+
+  return __longlong_as_double(old);
+}
+
 #ifdef PADDLE_CUDA_FP16
 // NOTE(dzhwinter): cuda do not have atomicCAS for half.
 // Just use the half address as a unsigned value address and
@@ -92,6 +148,24 @@ inline static __device__ uint32_t add_to_high_half(uint32_t val, float x) {
   // the float16 in higher 16bits
   high_half.x = static_cast<uint16_t>(val >> 16);
   high_half = static_cast<float16>(static_cast<float>(high_half) + x);
+  return (val & 0xFFFFu) | (static_cast<uint32_t>(high_half.x) << 16);
+}
+
+inline static __device__ uint32_t max_to_low_half(uint32_t val, float x) {
+  float16 low_half;
+  // the float16 in lower 16bits
+  low_half.x = static_cast<uint16_t>(val & 0xFFFFu);
+  low_half = static_cast<float16>(static_cast<float>(low_half) > x ? 
+                                  static_cast<float>(low_half) : x);
+  return (val & 0xFFFF0000u) | low_half.x;
+}
+
+inline static __device__ uint32_t max_to_high_half(uint32_t val, float x) {
+  float16 high_half;
+  // the float16 in higher 16bits
+  high_half.x = static_cast<uint16_t>(val >> 16);
+  high_half = static_cast<float16>(static_cast<float>(high_half) > x ? 
+                                                     static_cast<float>(high_half) : x);
   return (val & 0xFFFFu) | (static_cast<uint32_t>(high_half.x) << 16);
 }
 
@@ -127,6 +201,38 @@ CUDA_ATOMIC_WRAPPER(Add, float16) {
   }
 }
 
+
+CUDA_ATOMIC_WRAPPER(Max, float16) {
+  // concrete packed float16 value may exsits in lower or higher 16bits
+  // of the 32bits address.
+  uint32_t *address_as_ui = reinterpret_cast<uint32_t *>(
+      reinterpret_cast<char *>(address) -
+      (reinterpret_cast<uintptr_t>(address) & 0x02));
+  float val_f = static_cast<float>(val);
+  uint32_t old = *address_as_ui;
+  uint32_t sum;
+  uint32_t newval;
+  uint32_t assumed;
+  if (((uintptr_t)address & 0x02) == 0) {
+    // the float16 value stay at lower 16 bits of the address.
+    do {
+      assumed = old;
+      old = atomicCAS(address_as_ui, assumed, max_to_low_half(assumed, val_f));
+    } while (old != assumed);
+    float16 ret;
+    ret.x = old & 0xFFFFu;
+    return ret;
+  } else {
+    // the float16 value stay at higher 16 bits of the address.
+    do {
+      assumed = old;
+      old = atomicCAS(address_as_ui, assumed, max_to_high_half(assumed, val_f));
+    } while (old != assumed);
+    float16 ret;
+    ret.x = old >> 16;
+    return ret;
+  }
+}
 #endif
 }  // namespace platform
 }  // namespace paddle
