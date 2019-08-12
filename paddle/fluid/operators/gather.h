@@ -60,5 +60,43 @@ void CPUGather(const platform::DeviceContext& ctx, const Tensor& src,
   }
 }
 
+template<typename T, typename IndexT>
+void CPUMaxGather(const platform::DeviceContext& ctx, 
+               const Tensor& src, const Tensor& updates,
+               const Tensor& index,  
+               Tensor* output_x, Tensor* output_u) {
+  PADDLE_ENFORCE(platform::is_cpu_place(ctx.GetPlace()));
+  // check index of shape 1-D
+  PADDLE_ENFORCE(index.dims().size() == 1 ||
+                 (index.dims().size() == 2 && index.dims()[1] == 1));
+  int64_t index_size = index.dims()[0];
+
+  auto src_dims = src.dims();
+
+  const T* p_src = src.data<T>();
+  const T* p_updates = updates.data<T>();
+
+  const IndexT* p_index = index.data<IndexT>();
+
+  T* data_output_x = output_x->data<T>();
+  T* data_output_u = output_u->data<T>();
+  // slice size
+  int slice_size = 1;
+  for (int i = 1; i < src_dims.size(); ++i) slice_size *= src_dims[i];
+  
+  for (int64_t i = 0; i < index_size; ++i) {
+    IndexT index_ = p_index[i];
+    for (int j = 0; j < slice_size; ++j) {
+      bool is_big = p_src[index_ * slice_size + j] > p_updates[i * slice_size + j];
+      if (is_big) {
+        data_output_u[i * slice_size + j] = static_cast<T>(0);
+      } else {
+        T tmp_value = data_output_x[index_ * slice_size + j];
+        data_output_x[index_ * slice_size + j] = static_cast<T>(0); 
+        data_output_u[i * slice_size + j] = tmp_value;
+      }
+    }
+  }
+}
 }  // namespace operators
 }  // namespace paddle

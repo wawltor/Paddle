@@ -12,30 +12,33 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
+#pragma once
 #include <string>
-#include "paddle/fluid/operators/gather.cu.h"
-#include "paddle/fluid/operators/gather_op.h"
-#include "paddle/fluid/operators/scatter.cu.h"
-#include "paddle/fluid/operators/scatter_op.h"
+#include "paddle/fluid/framework/eigen.h"
+#include "paddle/fluid/framework/op_registry.h"
+#include "paddle/fluid/operators/gather.h"
+#include "paddle/fluid/operators/scatter.h"
 
 namespace paddle {
 namespace operators {
 
+using Tensor = framework::Tensor;
+
 template <typename T>
-class ScatterOpCUDAKernel : public framework::OpKernel<T> {
+class ScatterMaxOpKernel : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
-    PADDLE_ENFORCE(platform::is_gpu_place(ctx.GetPlace()),
-                   "This kernel only runs on GPU device.");
+    PADDLE_ENFORCE(platform::is_cpu_place(ctx.GetPlace()),
+                   "This kernel only runs on CPU.");
     auto *X = ctx.Input<Tensor>("X");
     auto *Ids = ctx.Input<Tensor>("Ids");
     auto *Updates = ctx.Input<Tensor>("Updates");
     auto *Out = ctx.Output<Tensor>("Out");
     std::string mode = ctx.Attr<std::string>("mode");
 
-    Out->ShareDataWith(*X);
-
-    // use template class to support index32_t and index64_t
+    // In place output: Out = X, Out[Ids] = Updates
+    framework::TensorCopySync(*X, ctx.GetPlace(), Out);
+    // Apply ScatterMaxUpdate: Out[index] = Updates[:]
     const auto &index_type = Ids->type();
     bool index_type_match = index_type == framework::proto::VarType::INT32 ||
                             index_type == framework::proto::VarType::INT64;
@@ -45,27 +48,29 @@ class ScatterOpCUDAKernel : public framework::OpKernel<T> {
         paddle::framework::DataTypeToString(index_type),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
-    if (index_type == framework::proto::VarType::INT32) {
-      GPUScatterAssign<T, int32_t>(ctx, *Updates, *Ids, Out, mode);
-    } else {
-      GPUScatterAssign<T, int64_t>(ctx, *Updates, *Ids, Out, mode);
-    }
+      if (index_type == framework::proto::VarType::INT32) {
+        ScatterAssignMax<T, int32_t>(ctx, *Updates, *Ids, Out);
+      } else {
+        ScatterAssignMax<T, int64_t>(ctx, *Updates, *Ids, Out);
+      }
   }
 };
 
 template <typename T>
-class ScatterGradOpCUDAKernel : public framework::OpKernel<T> {
+class ScatterMaxGradientOpKernel : public framework::OpKernel<T> {
  public:
   void Compute(const framework::ExecutionContext &ctx) const override {
-    PADDLE_ENFORCE(platform::is_gpu_place(ctx.GetPlace()),
-                   "This kernel only runs on GPU device.");
+    PADDLE_ENFORCE(platform::is_cpu_place(ctx.GetPlace()),
+                   "This kernel only runs on CPU.");
     auto *dX = ctx.Output<Tensor>(framework::GradVarName("X"));
     auto *dUpdates = ctx.Output<Tensor>(framework::GradVarName("Updates"));
+    auto *X = ctx.Input<Tensor>("X");
+    auto *Updates = ctx.Input<Tensor>("Updates");
     auto *Ids = ctx.Input<Tensor>("Ids");
     auto *dOut = ctx.Input<Tensor>(framework::GradVarName("Out"));
+
     if (dX) {
-      // In place gradient: dX = dO
-      framework::TensorCopy(*dOut, ctx.GetPlace(), dX);
+      framework::TensorCopySync(*dOut, ctx.GetPlace(), dX);
     }
     if (dUpdates) {
       dUpdates->mutable_data<T>(ctx.GetPlace());
@@ -80,18 +85,13 @@ class ScatterGradOpCUDAKernel : public framework::OpKernel<T> {
         paddle::framework::DataTypeToString(index_type),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT32),
         paddle::framework::DataTypeToString(framework::proto::VarType::INT64));
-    // Gradient by Gather: dUpdates = dO[Ids]
     if (index_type == framework::proto::VarType::INT32) {
-      GPUGather<T, int32_t>(ctx.device_context(), *dOut, *Ids, dUpdates);
+      CPUMaxGather<T, int32_t>(ctx.device_context(), *X, *Updates, *Ids, dX, dUpdates);
     } else {
-      GPUGather<T, int64_t>(ctx.device_context(), *dOut, *Ids, dUpdates);
+      CPUMaxGather<T, int64_t>(ctx.device_context(), *X, *Updates, *Ids, dX, dUpdates);
     }
   }
 };
 
 }  // namespace operators
 }  // namespace paddle
-
-namespace ops = paddle::operators;
-REGISTER_OP_CUDA_KERNEL(scatter, ops::ScatterOpCUDAKernel<float>);
-REGISTER_OP_CUDA_KERNEL(scatter_grad, ops::ScatterGradOpCUDAKernel<float>);

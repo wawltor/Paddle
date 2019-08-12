@@ -123,6 +123,7 @@ __all__ = [
     'resize_nearest',
     'gather',
     'scatter',
+    'scatter_max',
     'sequence_scatter',
     'random_crop',
     'mean_iou',
@@ -8355,7 +8356,7 @@ def gather(input, index, overwrite=True):
     return out
 
 
-def scatter(input, index, updates, name=None, overwrite=True):
+def scatter(input, index, updates, name=None, mode="overwrite"):
     """
     **Scatter Layer**
 
@@ -8373,10 +8374,14 @@ def scatter(input, index, updates, name=None, overwrite=True):
                           int32 or int64 as it is used as indexes.
         updates (Variable): The updated value of scatter op.
         name (str|None): The output variable name. Default None.
-        overwrite (bool): The mode that updating the output when has same index.
-            If True, use the overwrite mode to update the output of the same index,
-	    if False, use the accumulate mode to update the output of the same index. 
-	    Default value is True.You can set overwrite=False to implement scatter_add.
+        mode(str): The mode of scatter method, include overwrite, add, max.
+                   If in overwrite mode, just copying the updates data to selected indices.
+                      the indices should not have the same index.
+                   If in `add` mode, at the same time, the indices have the same index, the op
+                      will use the add method at the same index.
+                   If in `max` mode, the op will select the max value in the same index.  
+                   Default value is `overwrite`.You can set `add` to implement scatter_add, and 
+                      you can set `max` to implement scatter_max.
 
     Returns:
         output (Variable): The output is a tensor with the same shape as input.
@@ -8401,10 +8406,54 @@ def scatter(input, index, updates, name=None, overwrite=True):
         inputs={"X": input,
                 "Ids": index,
                 "Updates": updates},
-        attrs={'overwrite': overwrite},
+        attrs={'mode': mode},
         outputs={"Out": out})
     return out
 
+def scatter_max(input, index, updates, name=None):
+    """
+    **Scatter Layer**
+
+    Output is obtained by updating the input on selected indices on the first
+    axis, use max function to select value between input data and updates data.
+
+    .. math::
+
+        Out = X
+        Out[Ids] = max(Updates, X[Ids])
+
+    Args:
+        input (Variable): The source input with rank>=1.
+        index (Variable): The index input with rank=1. Its dtype should be
+                          int32 or int64 as it is used as indexes.
+        updates (Variable): The updated value of scatter op.
+        name (str|None): The output variable name. Default None.
+
+    Returns:
+        output (Variable): The output is a tensor with the same shape as input.
+
+    Examples:
+
+        .. code-block:: python
+
+            import paddle.fluid as fluid
+
+            input = fluid.layers.data(name='data', shape=[3, 5, 9], dtype='float32', append_batch_size=False)
+            index = fluid.layers.data(name='index', shape=[3], dtype='int64', append_batch_size=False)
+            updates = fluid.layers.data(name='update', shape=[3, 5, 9], dtype='float32', append_batch_size=False)
+
+            output = fluid.layers.scatter_max(input, index, updates)
+    """
+    helper = LayerHelper('scatter_max', **locals())
+    dtype = helper.input_dtype()
+    out = helper.create_variable_for_type_inference(dtype)
+    helper.append_op(
+        type="scatter_max",
+        inputs={"X": input,
+                "Ids": index,
+                "Updates": updates},
+        outputs={"Out": out})
+    return out
 
 def sequence_scatter(input, index, updates, name=None):
     """

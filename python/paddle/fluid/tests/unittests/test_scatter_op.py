@@ -47,7 +47,7 @@ class TestScatterOp0(OpTest):
         output_np = np.copy(ref_np)
         output_np[index_np] = updates_np
         self.inputs = {'X': ref_np, 'Ids': index_np, 'Updates': updates_np}
-        self.attrs = {'overwrite': True}
+        self.attrs = {'mode': "overwrite"}
         self.outputs = {'Out': output_np}
 
     def test_check_output(self):
@@ -65,10 +65,9 @@ class TestScatterOp1(OpTest):
         index_np = np.array([1, 1]).astype("int32")
         updates_np = np.random.random((2, 3)).astype("float32")
         output_np = np.copy(ref_np)
-        output_np[index_np] = zeros_np
         for i in range(0, len(index_np)):
             output_np[index_np[i]] += updates_np[i]
-        self.attrs = {'overwrite': False}
+        self.attrs = {'mode': 'add'}
         self.inputs = {'X': ref_np, 'Ids': index_np, 'Updates': updates_np}
         self.outputs = {'Out': output_np}
 
@@ -113,17 +112,16 @@ class TestScatterOp3(OpTest):
         index_np = np.array([1, 1]).astype("int32")
         updates_np = np.random.random((2, 3)).astype("float32")
         output_np = np.copy(ref_np)
-        output_np[index_np] = zeros_np
         for i in range(0, len(index_np)):
             output_np[index_np[i]] += updates_np[i]
-        self.attrs = {'overwrite': False}
+        self.attrs = {'mode': "add"}
         self.inputs = {'X': ref_np, 'Ids': index_np, 'Updates': updates_np}
         self.outputs = {'Out': output_np}
 
     def test_check_output(self):
         if core.is_compiled_with_cuda():
             place = core.CUDAPlace(0)
-            self.check_output_with_place(place, atol=1e-3)
+            self.check_output_with_place(place, atol=1e-6)
 
     def test_check_grad(self):
         if core.is_compiled_with_cuda():
