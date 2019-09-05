@@ -941,28 +941,33 @@ void MultiSlotInMemoryDataFeed::PutToFeedVec(
       CopyToFeedTensor(tensor_ptr, feasign, total_instance * sizeof(int64_t));
     }
     auto& slot_offset = offset[i];
-    if (this->input_type_ == 1 && !use_slots_is_dense_[i]) {
-      VLOG(3) << "lod tensor lod size is " << slot_offset[i].size();
-      std::vector<size_t> tmp_offset;
-      PADDLE_ENFORCE_EQ(slot_offset[i], 2, 
-        "In batch reader, the sparse tensor lod size must be 2");
-      const auto& max_size = slot_offset[i][1];
-      tmp_offset.reserve(slot_offset[i][1] + 1);
-      for (int i = 0; i <= max_size; i++) {
-        tmp_offset.emplace_back(i);
+    if (this->input_type_ == 0) {
+      LoD data_lod{slot_offset};
+      feed_vec_[i]->set_lod(data_lod);
+    } else if (this->input_type_ == 1) {
+      if (!use_slots_is_dense_[i]) {
+        VLOG(3) << "lod tensor lod size is " << slot_offset.size();
+        std::vector<size_t> tmp_offset;
+        PADDLE_ENFORCE_EQ(slot_offset.size(), 2, 
+            "In batch reader, the sparse tensor lod size must be 2");
+        const auto& max_size = slot_offset[1];
+        tmp_offset.reserve(max_size + 1);
+        for (int k = 0; k <= max_size; k++) {
+          tmp_offset.emplace_back(k);
+        }
+        slot_offset = tmp_offset;
+        LoD data_lod{slot_offset};
+        feed_vec_[i]->set_lod(data_lod);
       }
-      slot_offset = tmp_offset;
     }
-    LoD data_lod{slot_offset};
-    feed_vec_[i]->set_lod(data_lod);
     if (use_slots_is_dense_[i]) {
       if (inductive_shape_index_[i] != -1) {
         use_slots_shape_[i][inductive_shape_index_[i]] =
             total_instance / total_dims_without_inductive_[i];
       }
       feed_vec_[i]->Resize(framework::make_ddim(use_slots_shape_[i]));
-      std::string shape_str = "";
     }
+    std::string shape_str = "";
     for (int k = 0; k < use_slots_shape_[i].size(); k++) {
       shape_str += std::to_string(use_slots_shape_[i][k]) + " ";
     } 

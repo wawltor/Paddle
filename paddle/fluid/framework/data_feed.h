@@ -230,8 +230,7 @@ class InMemoryDataFeed : public DataFeed {
  protected:
   virtual bool ParseOneInstance(T* instance) = 0;
   virtual bool ParseOneInstanceFromPipe(T* instance) = 0;
-  virtual void PutToFeedVec(const std::vector<T>& ins_vec, 
-    const int& input_type = 0) = 0;
+  virtual void PutToFeedVec(const std::vector<T>& ins_vec) = 0; 
 
   int thread_id_;
   int thread_num_;
@@ -547,8 +546,7 @@ class MultiSlotInMemoryDataFeed : public InMemoryDataFeed<Record> {
  protected:
   virtual bool ParseOneInstance(Record* instance);
   virtual bool ParseOneInstanceFromPipe(Record* instance);
-  virtual void PutToFeedVec(const std::vector<Record>& ins_vec,
-    const int& input_type=0);
+  virtual void PutToFeedVec(const std::vector<Record>& ins_vec);
 };
 
 #if defined(PADDLE_WITH_CUDA) && !defined(_WIN32)
