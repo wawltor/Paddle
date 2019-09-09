@@ -226,12 +226,19 @@ void DownpourWorker::CollectLabelInfo(size_t table_idx) {
       break;
     }
   }
+  VLOG(3) << "step collect mesage step 1";
   auto& feature = features_[table_id];
+  VLOG(3) << "step collect mesage step 2";
   auto& feature_label = feature_labels_[table_id];
+  VLOG(3) << "step collect mesage step 3";
   feature_label.resize(feature.size());
+  VLOG(3) << "step collect mesage step 4:" << label_var_name_[table_id];
   Variable* var = thread_scope_->FindVar(label_var_name_[table_id]);
+  VLOG(3) << "step collect mesage step 5";
   LoDTensor* tensor = var->GetMutable<LoDTensor>();
+  VLOG(3) << "step collect mesage step 6";
   int64_t* label_ptr = tensor->data<int64_t>();
+  VLOG(3) << "step collect mesage step 7";
 
   size_t global_index = 0;
   for (size_t i = 0; i < sparse_key_names_[table_id].size(); ++i) {
@@ -592,6 +599,7 @@ void DownpourWorker::TrainFilesWithProfiler() {
     total_time += timeline.ElapsedSec();
 
     VLOG(3) << "program config size: " << param_.program_config_size();
+    VLOG(3) << "sparse table size is " << param_.program_config(0).pull_sparse_table_id_size(); 
     for (int i = 0; i < param_.program_config(0).pull_sparse_table_id_size();
          ++i) {
       uint64_t tid = static_cast<uint64_t>(
@@ -612,11 +620,13 @@ void DownpourWorker::TrainFilesWithProfiler() {
       total_time += timeline.ElapsedSec();
       timeline.Start();
       CollectLabelInfo(i);
+      VLOG(3) << "collect lable info done.";
       timeline.Pause();
       collect_label_time += timeline.ElapsedSec();
       total_time += timeline.ElapsedSec();
       timeline.Start();
       FillSparseValue(i);
+      VLOG(3) << "fill sparse table value done.";
       timeline.Pause();
       fill_sparse_time += timeline.ElapsedSec();
       total_time += timeline.ElapsedSec();
