@@ -26,6 +26,7 @@ struct SameDimsElemwiseAdd<platform::CUDADeviceContext, T> {
   void operator()(const framework::ExecutionContext& ctx,
                   const framework::Tensor* x, const framework::Tensor* y,
                   framework::Tensor* z) {
+    VLOG(0) << "step in elementwise add op 1";
     AddRangeFunctor<T> functor(x->data<T>(), y->data<T>(), z->data<T>());
     auto& dev_ctx = ctx.template device_context<platform::CUDADeviceContext>();
     platform::ForRange<platform::CUDADeviceContext> for_range(dev_ctx,
@@ -39,6 +40,7 @@ struct SameDimsElemwiseAdd<platform::CUDADeviceContext, platform::float16> {
   void operator()(const framework::ExecutionContext& ctx,
                   const framework::Tensor* x, const framework::Tensor* y,
                   framework::Tensor* z) {
+    VLOG(0) << "step in elementwise add  op 2";
     auto size = x->numel();
     dim3 grid_size = dim3(((size + 1) / 2 + PADDLE_CUDA_THREAD_SIZE - 1) /
                               PADDLE_CUDA_THREAD_SIZE,
