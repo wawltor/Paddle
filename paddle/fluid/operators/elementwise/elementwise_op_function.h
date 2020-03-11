@@ -72,6 +72,9 @@ inline void get_mid_dims(const framework::DDim &x_dims,
   for (int i = 0; i < axis; ++i) {
     (*pre) *= x_dims[i];
   }
+  for (int i = 0; i < y_dims.size(); i++) {
+     VLOG(0) << "in y_dims: " << y_dims[i];
+  }
   for (int i = 0; i < y_dims.size(); ++i) {
     if (x_dims[i + axis] != y_dims[i]) {
       PADDLE_ENFORCE(y_dims[i] == 1 || x_dims[i + axis] == 1,
@@ -507,22 +510,40 @@ void CommonGradBroadcastCUDA(
 #endif  // __NVCC__
 
 inline framework::DDim trim_trailing_singular_dims(
-    const framework::DDim &dims) {
+    const framework::DDim &dims, int& pre_axis) {
   // Remove trailing dimensions of size 1 for y
-  auto actual_dims_size = dims.size();
-  for (; actual_dims_size != 0; --actual_dims_size) {
-    if (dims[actual_dims_size - 1] != 1) break;
+  auto post_actual_dims_size = dims.size();
+  for (; post_actual_dims_size != 0; --post_actual_dims_size) {
+    if (dims[post_actual_dims_size - 1] != 1) break;
   }
-  if (actual_dims_size == dims.size()) return dims;
+  for (int i = 0; i < dims.size(); i++) {
+     VLOG(0) << "check Y dim : " << dims[i];
+  }
+  int pre_actual_dims_size = 0;
+  for (; pre_actual_dims_size < dims.size(); ++pre_actual_dims_size){
+    if (dims[pre_actual_dims_size] != 1) break;
+  }
+ 
+  int final_dim_size = post_actual_dims_size - pre_actual_dims_size;
+  final_dim_size = final_dim_size >= 1 ? final_dim_size : 0;
+  if (final_dim_size == dims.size()) return dims;
   std::vector<int> trim_dims;
-  trim_dims.resize(actual_dims_size);
-  for (int i = 0; i < actual_dims_size; ++i) {
-    trim_dims[i] = dims[i];
+  trim_dims.resize(final_dim_size);
+
+  // if the dims are 1, return empty dims
+  if (final_dim_size == 0) {
+     return framework::DDim(framework::make_dim());
   }
-  if (trim_dims.size() == 0) {
-    return framework::DDim(framework::make_dim());
+
+  int count = 0;
+  for (int i = pre_actual_dims_size; i < post_actual_dims_size; ++i) {
+    trim_dims[count] = dims[i];
+    count ++;
   }
   framework::DDim actual_dims = framework::make_ddim(trim_dims);
+  if (pre_actual_dims_size > 0) {
+     pre_axis = pre_actual_dims_size;
+  }
   return actual_dims;
 }
 
@@ -1076,6 +1097,7 @@ static void ElemwiseGradBroadcast2CUDA(cudaStream_t stream, const T *x,
                                        DY_OP dy_op, T *dx, T *dy) {
   int block_size = std::min(ELEMWISE_MAX_BLOCK_DIM, pre * post);
   int gird_size = n;
+  VLOG(0) << "cuda check, block_size:" << block_size << ", grid size:" << gird_size;
   ElemwiseGradBroadcast2CUDAKernel<<<gird_size, block_size, 0, stream>>>(
       x, y, out, dout, pre, n, post, is_xsize_larger, dx_op, dy_op, dx, dy);
 }
@@ -1156,25 +1178,27 @@ void ElemwiseGradComputeWithBroadcast(
     is_xsize_larger = false;
     max_dim = y_dims.size();
   }
-
   axis = (axis == -1 ? std::abs(x_dims.size() - y_dims.size()) : axis);
   PADDLE_ENFORCE_GE(axis, 0, "Axis should be in range [0, %d)", axis);
   PADDLE_ENFORCE_LT(axis, max_dim, "Axis should be in range [0, %d)", axis);
 
   int pre, n, post, is_run_common_broadcast, axis_trim = 0;
+  int pre_axis = 0;
   if (is_xsize_larger) {
-    auto y_dims_trimed = trim_trailing_singular_dims(y_dims);
-    axis_trim = (y_dims_trimed.size() == 0) ? x_dims.size() : axis;
+    auto y_dims_trimed = trim_trailing_singular_dims(y_dims, pre_axis);
+    axis_trim = (y_dims_trimed.size() == 0) ? x_dims.size() : axis + pre_axis;
     get_mid_dims(x_dims, y_dims_trimed, axis_trim, &pre, &n, &post,
                  &is_run_common_broadcast);
   } else {
-    auto x_dims_trimed = trim_trailing_singular_dims(x_dims);
-    axis_trim = (x_dims_trimed.size() == 0) ? y_dims.size() : axis;
+    auto x_dims_trimed = trim_trailing_singular_dims(x_dims, pre_axis);
+    axis_trim = (x_dims_trimed.size() == 0) ? y_dims.size() : axis + pre_axis;
     get_mid_dims(y_dims, x_dims_trimed, axis_trim, &pre, &n, &post,
                  &is_run_common_broadcast);
   }
+  VLOG(0) << "pre:" << pre << ",n:" << n << ", pos:" << post << ", is_run:" << is_run_common_broadcast << ", axis:" << axis;
   // special case for common backward implementation.
   if (is_run_common_broadcast) {
+    VLOG(0) << "check step 1";
     CommonElementwiseBroadcastBackward<DeviceContext, T, DX_OP, DY_OP>(
         ctx, x_dims, y_dims, x, y, out, dout, axis, dx, dy, dx_op, dy_op);
     return;
@@ -1199,6 +1223,7 @@ void ElemwiseGradComputeWithBroadcast(
   } else {
     if (platform::is_gpu_place(ctx.GetPlace())) {
 #ifdef __NVCC__
+      VLOG(0) << "check step 2";
       ElemwiseGradBroadcast2CUDA(
           ctx.template device_context<DeviceContext>().stream(), x.data<T>(),
           y.data<T>(), out.data<T>(), dout.data<T>(), pre, n, post,
@@ -1319,14 +1344,15 @@ void ElementwiseComputeEx(const framework::ExecutionContext &ctx,
   PADDLE_ENFORCE_LT(axis, max_dim, "Axis should be in range [0, %d)", axis);
 
   int pre, n, post, is_run_common_broadcast, axis_trim = 0;
+  int pre_axis = 0;
   if (is_xsize_larger) {
-    auto y_dims_trimed = trim_trailing_singular_dims(y_dims);
-    axis_trim = (y_dims_trimed.size() == 0) ? x_dims.size() : axis;
+    auto y_dims_trimed = trim_trailing_singular_dims(y_dims, pre_axis);
+    axis_trim = (y_dims_trimed.size() == 0) ? x_dims.size() : axis + pre_axis;
     get_mid_dims(x_dims, y_dims_trimed, axis_trim, &pre, &n, &post,
                  &is_run_common_broadcast);
   } else {
-    auto x_dims_trimed = trim_trailing_singular_dims(x_dims);
-    axis_trim = (x_dims_trimed.size() == 0) ? y_dims.size() : axis;
+    auto x_dims_trimed = trim_trailing_singular_dims(x_dims, pre_axis);
+    axis_trim = (x_dims_trimed.size() == 0) ? y_dims.size() : axis + pre_axis;
     get_mid_dims(y_dims, x_dims_trimed, axis_trim, &pre, &n, &post,
                  &is_run_common_broadcast);
   }
@@ -1598,8 +1624,9 @@ void FusedElemwiseAndActComputeWithBroadcast(
     const framework::Tensor &y, CompoundFunctor compound_functor, int axis,
     framework::Tensor *out, framework::Tensor *intermediate_out) {
   axis = (axis == -1 ? x_dim.size() - y_dim_untrimed.size() : axis);
-  auto y_dim = trim_trailing_singular_dims(y_dim_untrimed);
-  axis = (y_dim.size() == 0) ? x_dim.size() : axis;
+  int pre_axis = 0;
+  auto y_dim = trim_trailing_singular_dims(y_dim_untrimed, pre_axis);
+  axis = (y_dim.size() == 0) ? x_dim.size() : axis + pre_axis;
 
   int pre, n, post, is_run_common_broadcast;
   get_mid_dims(x_dim, y_dim, axis, &pre, &n, &post, &is_run_common_broadcast);
@@ -2111,8 +2138,9 @@ void FusedElemwiseAndActGradComputeWithBroadcast(
     framework::Tensor *dintermediate, DX_OP dx_op, DY_OP dy_op,
     DIntermediate_OP dintermediate_op) {
   axis = (axis == -1 ? x_dim.size() - y_dim_untrimed.size() : axis);
-  auto y_dim = trim_trailing_singular_dims(y_dim_untrimed);
-  axis = (y_dim.size() == 0) ? x_dim.size() : axis;
+  int pre_axis = 0;
+  auto y_dim = trim_trailing_singular_dims(y_dim_untrimed, pre_axis);
+  axis = (y_dim.size() == 0) ? x_dim.size() : axis + pre_axis;
 
   int pre, n, post, is_run_common_broadcast;
   get_mid_dims(x_dim, y_dim, axis, &pre, &n, &post, &is_run_common_broadcast);
