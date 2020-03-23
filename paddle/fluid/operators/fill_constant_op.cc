@@ -44,9 +44,24 @@ class FillConstantOp : public framework::OperatorWithKernel {
  protected:
   framework::OpKernelType GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    return framework::OpKernelType(
-        framework::proto::VarType::Type(ctx.Attr<int>("dtype")),
-        ctx.GetPlace());
+    // get the default kernel_type from input tensor place and dtype
+    framework::OpKernelType kt = OperatorWithKernel::GetExpectedKernelType(ctx);
+
+    // set the dtype of kernel from the op setting
+    kt.data_type_ = framework::proto::VarType::Type(ctx.Attr<int>("dtype"));
+
+    // according to the attributes, set the operator execution place
+    const auto& device = ctx.Attr<std::string>("device");
+    if (device == "cpu" || device == "gpu") {
+      if (device == "cpu") {
+        kt.place_ = platform::CPUPlace();
+      } else {
+        kt.place_ = platform::CUDAPlace();
+      }
+    } else {
+      kt.place_ = ctx.GetPlace();
+    }
+    return kt;
   }
 
   framework::OpKernelType GetKernelTypeForVar(
@@ -101,6 +116,12 @@ class FillConstantOpMaker : public framework::OpProtoAndCheckerMaker {
                   "memory. Otherwise, fill output variable to the running "
                   "device")
         .SetDefault(false);
+    AddAttr<std::string>(
+        "device",
+        "(string, default '') Which device to run the operator."
+        " If do not set the value, I will select the device of "
+        "user set")
+        .SetDefault("");
     AddOutput("Out",
               "(Tensor) Tensor of specified shape will be filled "
               "with the specified value");
