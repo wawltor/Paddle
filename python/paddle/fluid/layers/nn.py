@@ -225,6 +225,8 @@ def fc(input,
 
     When the input is a single Tensor(or LoDTensor):
 
+    check check check done !
+
     .. math::
 
         Out = Act({XW + b})

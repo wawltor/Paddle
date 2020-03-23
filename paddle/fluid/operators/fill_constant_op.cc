@@ -44,23 +44,19 @@ class FillConstantOp : public framework::OperatorWithKernel {
  protected:
   framework::OpKernelType GetExpectedKernelType(
       const framework::ExecutionContext& ctx) const override {
-    // get the default kernel_type from input tensor place and dtype
-    framework::OpKernelType kt = OperatorWithKernel::GetExpectedKernelType(ctx);
-
-    // set the dtype of kernel from the op setting
-    kt.data_type_ = framework::proto::VarType::Type(ctx.Attr<int>("dtype"));
-
     // according to the attributes, set the operator execution place
     const auto& device = ctx.Attr<std::string>("device");
+    auto place = ctx.GetPlace();
     if (device == "cpu" || device == "gpu") {
       if (device == "cpu") {
-        kt.place_ = platform::CPUPlace();
+        place = platform::CPUPlace();
       } else {
-        kt.place_ = platform::CUDAPlace();
+        place = platform::CUDAPlace();
       }
-    } else {
-      kt.place_ = ctx.GetPlace();
     }
+    return framework::OpKernelType(
+        framework::proto::VarType::Type(ctx.Attr<int>("dtype")), place);
+    framework::OpKernelType kt = OperatorWithKernel::GetExpectedKernelType(ctx);
     return kt;
   }
 
