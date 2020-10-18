@@ -81,7 +81,6 @@ void create_mask_matrix(const framework::ExecutionContext& context,
                         const bool& is_reverse) {
   const auto& seq_len_vec = GetDataFromTensor<int>(sequence_length);
   const int& table_width = mask_matrix->dims()[0];
-  VLOG(2) << "INPUT MASK TENSOR SHAPE:" << mask_matrix->dims();
   Tensor temp;
   temp.Resize(
       framework::make_ddim({mask_matrix->dims()[1], mask_matrix->dims()[0]}));
@@ -119,7 +118,6 @@ void dropout_cpu_function_inplace(const framework::ExecutionContext& context,
                                   const int& seed_number,
                                   const bool& upscale_in_train,
                                   const bool& is_test) {
-  VLOG(2) << "dropout_cpu_function_inplace function";
   auto* x_data = x->data<T>();
   if (!is_test) {
     size_t size = framework::product(x->dims());
@@ -248,9 +246,7 @@ struct Cell {
   virtual void operator()(const platform::CPUDeviceContext* device_ctx,
                           Tensor* input, const Tensor* weight_hh,
                           const Tensor* init_h, const Tensor* init_c,
-                          Tensor* last_h, Tensor* last_c, Tensor* output) {
-    VLOG(2) << "Calling Base Cell !!!!!";
-  }
+                          Tensor* last_h, Tensor* last_c, Tensor* output) {}
 };
 
 template <typename T>
@@ -259,14 +255,6 @@ struct LSTMCell : Cell<T> {
                   const Tensor* weight_hh, const Tensor* init_h,
                   const Tensor* init_c, Tensor* last_h, Tensor* last_c,
                   Tensor* output) {
-    VLOG(2) << "Calling LSTM Cell !!!!!";
-    VLOG(2) << "input shape: " << input->dims();
-    VLOG(2) << "w_hh shape: " << weight_hh->dims();
-    VLOG(2) << "init_h shape: " << init_h->dims();
-    VLOG(2) << "init_c shape: " << init_c->dims();
-    VLOG(2) << "last_h shape: " << last_h->dims();
-    VLOG(2) << "last_c shape: " << last_c->dims();
-    VLOG(2) << "output shape: " << output->dims();
     // Print3DTensor<T>(input, "Cell Input");
     // Print3DTensor<T>(init_h, "init_h");
     auto blas = math::GetBlas<platform::CPUDeviceContext, T>(*device_ctx);
@@ -343,9 +331,6 @@ struct Layer {
     eigen_in = eigen_in +
                eigen_bias_ih.broadcast(Eigen::DSizes<int, 2>(row_num, 1)) +
                eigen_bias_hh.broadcast(Eigen::DSizes<int, 2>(row_num, 1));
-    Print3DTensor<T>(input, "preprocess_input");
-    Print2DTensor<T>(&weight, "preprocess_weight");
-    Print3DTensor<T>(cache_input, "preprocess_output");
   }
 
   void postprocess(const framework::ExecutionContext& context, Tensor* output,
@@ -402,7 +387,6 @@ struct SingleLayer : Layer<T> {
     // vec[0] is parameter of w_hi, vec[2] is bias of b_hi
     Tensor input_w;
     this->preprocess(context, input, vec[0], vec[2], vec[3], &input_w);
-    VLOG(2) << "output shape: " << output->dims();
 
     auto input_tensors = Unbind(input_w);
     auto output_tensors = Unbind(*output);
@@ -713,8 +697,6 @@ void RnnFunc(const framework::ExecutionContext& ctx, const Tensor* input,
         dropout_cpu_function_inplace<T>(ctx, input_holder, dropout_mask,
                                         dropout_prob, seed,
                                         true /*upscale_in_train*/, is_test);
-        Print3DTensor<T>(input_holder, "input_holder after dropout");
-        Print3DTensor<uint8_t>(dropout_mask, "dropout mask");
       }
     }
     if (is_bidirec) {
