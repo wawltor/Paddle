@@ -773,5 +773,91 @@ class CudnnLSTMCPUKernel : public framework::OpKernel<T> {
   }
 };
 
+template <typename T>
+struct GradLayer {
+  virtual ~GradLayer() {}
+  virtual void operator()(const framework::ExecutionContext& context) {}
+};
+
+template <typename T, typename GradCellType>
+struct SingleGradLayer : GradLayer<T> {
+  explicit SingleGradLayer(GradCellType& cell) : cell_(cell) {}
+  virtual ~SingleGradLayer() {}
+  virtual void operator()(const framework::ExecutionContext& context) {}
+  GradCellType cell_;
+};
+
+template <typename T, typename GradCellType>
+struct BidirGradLayer : GradLayer<T> {
+  explicit BidirGradLayer(GradCellType& cell) : cell_(cell) {}
+  virtual ~BidirGradLayer() {}
+  virtual void operator()(const framework::ExecutionContext& context) {}
+  GradCellType cell_;
+};
+
+template <typename T>
+struct GradCell {
+  virtual ~GradCell() {}
+  virtual void operator()(const Tensor* input) {}
+};
+
+template <typename T>
+struct LSTMGradCell : GradCell<T> {
+  virtual void operator()(const Tensor* input) {}
+};
+
+template <typename GradCellType,
+          template <typename, typename> class SingleGradLayerT,
+          template <typename, typename> class BidirGradLayerT, typename T>
+void RnnGradFunc(const framework::ExecutionContext& ctx, const int& gate_num) {
+  // get the tensor pointer for the input
+  auto* input = ctx.Input<Tensor>("Input");
+  auto* weight = ctx.Input<Tensor>("W");
+  auto* init_h = ctx.Input<Tensor>("InitH");
+  auto* init_c = ctx.Input<Tensor>("InitC");
+  auto* reserve = ctx.Input<Tensor>("Reserve");
+  auto* state_out = ctx.Input<Tensor>("StateOut");
+  auto* out = ctx.Input<Tensor>("Out");
+  auto* out_grad = ctx.Input<Tensor>(framework::GradVarName("Out"));
+  auto* last_h_grad = ctx.Input<Tensor>(framework::GradVarName("LastH"));
+  auto* last_c_grad = ctx.Input<Tensor>(framework::GradVarName("LastC"));
+
+  // get the tensor pointer for the output
+  auto* in_grad = ctx.Output<Tensor>(framework::GradVarName("Input"));
+  auto* weight_grad = ctx.Output<Tensor>(framework::GradVarName("W"));
+  auto* init_h_grad = ctx.Output<Tensor>(framework::GradVarName("InitH"));
+  auto* init_c_grad = ctx.Output<Tensor>(framework::GradVarName("InitC"));
+
+  // get the attrbutes for the calcluate
+  const int& num_layers = ctx.Attr<int>("num_layers");
+  const bool& is_bidirec = ctx.Attr<bool>("is_bidirec");
+  const float& dropout_prob = ctx.Attr<float>("dropout_prob");
+  const bool& is_test = ctx.Attr<bool>("is_test");
+
+  GradCellType cell;
+  for (int i = num_layers - 1; i >= 0; --i) {
+    if (i > 0) {
+      if (dropout_prob != 0 && (!is_test)) {
+        continue;
+      }
+    }
+    if (is_bidirec) {
+      BidirGradLayerT<T, GradCellType> layer(cell);
+    } else {
+      SingleGradLayerT<T, GradCellType> layer(cell);
+    }
+  }
+}
+
+template <typename DeviceContext, typename T>
+class CudnnLSTMCPUGradKernel : public framework::OpKernel<T> {
+ public:
+  void Compute(const framework::ExecutionContext& ctx) const override {
+    const std::string& cell_type = ctx.Attr<std::string>("cell_type");
+    if (cell_type == "lstm") {
+      RnnGradFunc<LSTMGradCell<T>, SingleGradLayer, BidirGradLayer, T>(ctx, 4);
+    }
+  }
+};
 }  // namespace operators
 }  // namespace paddle
