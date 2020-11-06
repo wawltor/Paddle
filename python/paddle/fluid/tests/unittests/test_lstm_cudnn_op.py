@@ -37,11 +37,15 @@ def create_parameter(std, size, dtype):
     return np.random.uniform(low=-std, high=std, size=size).astype(dtype)
 
 
-def create_parameter_for_rnn(input_size, hidden_size, dtype, num_layers,
-                             is_bidirec):
+def create_parameter_for_rnn(input_size,
+                             hidden_size,
+                             dtype,
+                             num_layers,
+                             is_bidirec,
+                             gate_num=4):
     flat_w = []
     std = 1.0 / math.sqrt(hidden_size)
-    frame_size = 4 * hidden_size
+    frame_size = gate_num * hidden_size
     direction_num = 2 if is_bidirec else 1
     for i in range(0, num_layers):
         for j in range(0, 2 * direction_num):
